@@ -78,8 +78,6 @@ class RegionDataset(data.Dataset):
         regions = np.zeros((len(samples),self.crop_size,self.crop_size,3),dtype='uint8')
         for i, sample in enumerate(samples):
             regions[i] = crop_image(image, sample, self.crop_size, self.padding, True)
-            print(regions[i].shape)
-            input()
 
         regions = regions.transpose(0,3,1,2)
         regions = regions.astype('float32') - 128.

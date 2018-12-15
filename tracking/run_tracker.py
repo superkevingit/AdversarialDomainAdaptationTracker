@@ -1,3 +1,4 @@
+import ipdb
 import numpy as np
 import os
 import sys
@@ -11,6 +12,10 @@ import torch
 import torch.utils.data as data
 import torch.optim as optim
 from torch.autograd import Variable
+
+# domain adaptation
+from adapt import train_tgt
+from init_critic import init_model
 
 sys.path.insert(0,'../modules')
 from sample_generator import *
@@ -33,10 +38,10 @@ def forward_samples(model, image, samples, out_layer='conv3'):
         if opts['use_gpu']:
             regions = regions.cuda()
         feat = model(regions, out_layer=out_layer)
-        if i==0:
+        if i == 0:
             feats = feat.data.clone()
         else:
-            feats = torch.cat((feats,feat.data.clone()),0)
+            feats = torch.cat((feats, feat.data.clone()), 0)
     return feats
 
 
@@ -167,6 +172,24 @@ def run_mdnet(img_list, init_bbox, gt=None, savefig_dir='', display=False):
     # Initial training
     train(model, criterion, init_optimizer, pos_feats, neg_feats, opts['maxiter_init'])
 
+    ipdb.set_trace()
+    # ============domain adaptation==============
+    # copy for domain adaptation
+    tgt_model = MDNet(opts['model_path'])
+    tgt_model.load_state_dict(model.state_dict())
+
+    # init critic
+    critic = init_model(Discriminator(input_dims=opts['d_input_dims'],
+                                      hidden_dims=opts['d_hidden_dims'],
+                                      output_dims=opts['d_output_dims'],
+                        restore=opts['d_model_restore']))
+
+    src_data_loader =
+    tgt_data_loader =
+
+    # train for domain adaptation
+    tgt_model = train_tgt(model, tgt_model, critic, src_data_loader, tgt_data_loader)
+
     # Init sample generators
     sample_generator = SampleGenerator('gaussian', image.size, opts['trans_f'], opts['scale_f'], valid=True)
     pos_generator = SampleGenerator('gaussian', image.size, 0.1, 1.2)
@@ -206,7 +229,7 @@ def run_mdnet(img_list, init_bbox, gt=None, savefig_dir='', display=False):
             fig.savefig(os.path.join(savefig_dir,'0000.jpg'),dpi=dpi)
 
     # Main loop
-    for i in range(1,len(img_list)):
+    for i in range(1, len(img_list)):
 
         tic = time.time()
         # Load image
@@ -272,12 +295,16 @@ def run_mdnet(img_list, init_bbox, gt=None, savefig_dir='', display=False):
             pos_data = torch.stack(pos_feats_all[-nframes:],0).view(-1,feat_dim)
             neg_data = torch.stack(neg_feats_all,0).view(-1,feat_dim)
             train(model, criterion, update_optimizer, pos_data, neg_data, opts['maxiter_update'])
+            print "Frame %d/%d, Short term update " % \
+                (i, len(img_list))
 
         # Long term update
         elif i % opts['long_interval'] == 0:
             pos_data = torch.stack(pos_feats_all,0).view(-1,feat_dim)
             neg_data = torch.stack(neg_feats_all,0).view(-1,feat_dim)
             train(model, criterion, update_optimizer, pos_data, neg_data, opts['maxiter_update'])
+            print "Frame %d/%d, Long term update " % \
+                (i, len(img_list))
 
         spf = time.time()-tic
         spf_total += spf
@@ -321,7 +348,7 @@ if __name__ == "__main__":
     parser.add_argument('-d', '--display', action='store_true')
 
     args = parser.parse_args()
-    #assert(args.seq != '' or args.json != '')
+    # assert(args.seq != '' or args.json != '')
 
     dataset_path = '../dataset/OTB'
     dataset_index_path = os.path.join(dataset_path, 'tb_100.txt')

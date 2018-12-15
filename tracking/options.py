@@ -46,3 +46,18 @@ opts['momentum'] = 0.9
 opts['grad_clip'] = 10
 opts['lr_mult'] = {'fc6':10}
 opts['ft_layers'] = ['fc']
+
+# domain adaptation
+opts['d_input_dims'] = 500
+opts['d_hidden_dims'] = 500
+opts['d_output_dims'] = 2
+opts['d_model_restore'] = False
+# opts['c_learning_rate'] = 1e-4
+opts['beta1'] = 0.5
+opts['beta2'] = 0.9
+opts['d_learning_rate'] = 1e-4
+opts['num_epochs'] = 1000
+opts['log_step'] = 1
+opts['save_step'] = 100
+opts['model_root'] = "../models"
+opts['adapt_layers'] = ['conv']
