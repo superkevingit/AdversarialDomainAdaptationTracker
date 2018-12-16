@@ -1,4 +1,3 @@
-import ipdb
 import numpy as np
 import os
 import sys
@@ -14,8 +13,11 @@ import torch.optim as optim
 from torch.autograd import Variable
 
 # domain adaptation
+import ipdb
 from adapt import train_tgt
 from init_critic import init_model
+import random
+import pickle
 
 sys.path.insert(0,'../modules')
 from sample_generator import *
@@ -24,10 +26,13 @@ from model import *
 from bbreg import *
 from options import *
 from gen_config import *
+from utils import *
 
 np.random.seed(123)
 torch.manual_seed(456)
 torch.cuda.manual_seed(789)
+data_path = 'data/vot-otb.pkl'
+img_home = '../dataset/'
 
 
 def forward_samples(model, image, samples, out_layer='conv3'):
@@ -40,9 +45,31 @@ def forward_samples(model, image, samples, out_layer='conv3'):
         feat = model(regions, out_layer=out_layer)
         if i == 0:
             feats = feat.data.clone()
+            regions_group = regions.data.clone()
         else:
             feats = torch.cat((feats, feat.data.clone()), 0)
-    return feats
+            regions_group = torch.cat((regions_group, regions.data.clone()), 0)
+    return feats, regions_group
+
+
+def source_dataLoader():
+    with open(data_path, 'rb') as fp:
+        data = pickle.load(fp)
+    len_data = len(data)
+    key_list = []
+    for key, _ in data.items():
+        key_list.append(key)
+    seq = random.randint(0, len_data-1)
+    seq_name = key_list[seq]
+    seq = data[seq_name]
+    len_seq = len(seq['gt'])
+    img_num = random.randint(0, len_seq-1)
+    img = seq['images'][img_num]
+    img = os.path.join(img_home, seq_name, img)
+    img = Image.open(img).convert('RGB')
+    gt = seq['gt'][img_num]
+    return img, gt
+
 
 
 def set_optimizer(model, lr_base, lr_mult=opts['lr_mult'], momentum=opts['momentum'], w_decay=opts['w_decay']):
@@ -149,7 +176,7 @@ def run_mdnet(img_list, init_bbox, gt=None, savefig_dir='', display=False):
     # Train bbox regressor
     bbreg_examples = gen_samples(SampleGenerator('uniform', image.size, 0.3, 1.5, 1.1),
                                  target_bbox, opts['n_bbreg'], opts['overlap_bbreg'], opts['scale_bbreg'])
-    bbreg_feats = forward_samples(model, image, bbreg_examples)
+    bbreg_feats, _ = forward_samples(model, image, bbreg_examples)
     bbreg = BBRegressor(image.size)
     bbreg.train(bbreg_feats, bbreg_examples, target_bbox)
 
@@ -165,30 +192,47 @@ def run_mdnet(img_list, init_bbox, gt=None, savefig_dir='', display=False):
     neg_examples = np.random.permutation(neg_examples)
 
     # Extract pos/neg features
-    pos_feats = forward_samples(model, image, pos_examples)
-    neg_feats = forward_samples(model, image, neg_examples)
+#    pos_feats, pos_regions = forward_samples(model, image, pos_examples)
+    pos_feats, _ = forward_samples(model, image, pos_examples)
+    neg_feats, _ = forward_samples(model, image, neg_examples)
     feat_dim = pos_feats.size(-1)
 
     # Initial training
     train(model, criterion, init_optimizer, pos_feats, neg_feats, opts['maxiter_init'])
 
-    ipdb.set_trace()
-    # ============domain adaptation==============
+    # ============domain adaptation init (sky)==============
     # copy for domain adaptation
     tgt_model = MDNet(opts['model_path'])
+    if opts['use_gpu']:
+        tgt_model = tgt_model.cuda()
+    tgt_model.set_learnable_params(opts['adapt_layers'])
     tgt_model.load_state_dict(model.state_dict())
-
     # init critic
     critic = init_model(Discriminator(input_dims=opts['d_input_dims'],
                                       hidden_dims=opts['d_hidden_dims'],
-                                      output_dims=opts['d_output_dims'],
-                        restore=opts['d_model_restore']))
+                                      output_dims=opts['d_output_dims']),
+                        restore=opts['d_model_restore'])
+    # prepare source data
+    src_data_loader = torch.Tensor()
+    for i in range(opts['source_batch']):
+        src_img, src_gt = source_dataLoader()
+        src_regions = np.asarray(src_img)
+        src_regions = crop_image(src_regions, src_gt, opts['img_size'], opts['padding'])
+        src_regions = Variable(torch.from_numpy(src_regions)).float()
+        src_regions = src_regions.transpose(2, 0)
+        src_data_loader = torch.cat((src_data_loader, src_regions.unsqueeze(0)), 0)
 
-    src_data_loader =
-    tgt_data_loader =
+    # prepare target data
+    pos_regions = np.asarray(image)
+    pos_regions = crop_image(pos_regions, init_bbox, opts['img_size'], opts['padding'])
+    pos_regions = Variable(torch.from_numpy(pos_regions)).float()
+    pos_regions = pos_regions.transpose(2, 0)
 
+    ipdb.set_trace()
     # train for domain adaptation
-    tgt_model = train_tgt(model, tgt_model, critic, src_data_loader, tgt_data_loader)
+    tgt_model = train_tgt(model, tgt_model, critic, src_data_loader, pos_regions)
+
+    # ============domain adaptation init end==============
 
     # Init sample generators
     sample_generator = SampleGenerator('gaussian', image.size, opts['trans_f'], opts['scale_f'], valid=True)
@@ -237,7 +281,7 @@ def run_mdnet(img_list, init_bbox, gt=None, savefig_dir='', display=False):
 
         # Estimate target bbox
         samples = gen_samples(sample_generator, target_bbox, opts['n_samples'])
-        sample_scores = forward_samples(model, image, samples, out_layer='fc6')
+        sample_scores, _ = forward_samples(model, image, samples, out_layer='fc6')
         top_scores, top_idx = sample_scores[:,1].topk(5)
         top_idx = top_idx.cpu().numpy()
         target_score = top_scores.mean()
@@ -254,7 +298,7 @@ def run_mdnet(img_list, init_bbox, gt=None, savefig_dir='', display=False):
         # Bbox regression
         if success:
             bbreg_samples = samples[top_idx]
-            bbreg_feats = forward_samples(model, image, bbreg_samples)
+            bbreg_feats, _ = forward_samples(model, image, bbreg_samples)
             bbreg_samples = bbreg.predict(bbreg_feats, bbreg_samples)
             bbreg_bbox = bbreg_samples.mean(axis=0)
         else:
@@ -280,8 +324,8 @@ def run_mdnet(img_list, init_bbox, gt=None, savefig_dir='', display=False):
                                        opts['overlap_neg_update'])
 
             # Extract pos/neg features
-            pos_feats = forward_samples(model, image, pos_examples)
-            neg_feats = forward_samples(model, image, neg_examples)
+            pos_feats, _ = forward_samples(model, image, pos_examples)
+            neg_feats, _ = forward_samples(model, image, neg_examples)
             pos_feats_all.append(pos_feats)
             neg_feats_all.append(neg_feats)
             if len(pos_feats_all) > opts['n_frames_long']:
