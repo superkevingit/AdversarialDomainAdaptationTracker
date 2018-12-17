@@ -14,7 +14,7 @@ def init_weights(layer):
         layer.bias.data.fill_(0)
 
 
-def init_model(net, restore):
+def init_model(net, restore=None):
     """Init models with cuda and weights."""
     # init weights of model
     net.apply(init_weights)

@@ -149,7 +149,7 @@ def train(model, criterion, optimizer, pos_feats, neg_feats, maxiter, in_layer='
         #print "Iter %d, Loss %.4f" % (iter, loss.data[0])
 
 
-def run_mdnet(img_list, init_bbox, gt=None, savefig_dir='', display=False):
+def run_mdnet(seq_name, img_list, init_bbox, gt=None, savefig_dir='', display=False):
 
     # Init bbox
     target_bbox = np.array(init_bbox)
@@ -210,8 +210,8 @@ def run_mdnet(img_list, init_bbox, gt=None, savefig_dir='', display=False):
     # init critic
     critic = init_model(Discriminator(input_dims=opts['d_input_dims'],
                                       hidden_dims=opts['d_hidden_dims'],
-                                      output_dims=opts['d_output_dims']),
-                        restore=opts['d_model_restore'])
+                                      output_dims=opts['d_output_dims']))
+                        #restore=opts['d_model_restore'])
     # prepare source data
     src_data_loader = torch.Tensor()
     for i in range(opts['source_batch']):
@@ -227,10 +227,12 @@ def run_mdnet(img_list, init_bbox, gt=None, savefig_dir='', display=False):
     pos_regions = crop_image(pos_regions, init_bbox, opts['img_size'], opts['padding'])
     pos_regions = Variable(torch.from_numpy(pos_regions)).float()
     pos_regions = pos_regions.transpose(2, 0)
+    tgt_data_loader = torch.Tensor()
+    for i in range(opts['source_batch']):
+        tgt_data_loader = torch.cat((tgt_data_loader, pos_regions.unsqueeze(0)), 0)
 
-    ipdb.set_trace()
     # train for domain adaptation
-    tgt_model = train_tgt(model, tgt_model, critic, src_data_loader, pos_regions)
+    tgt_model = train_tgt(seq_name, model, tgt_model, critic, src_data_loader, tgt_data_loader)
 
     # ============domain adaptation init end==============
 
@@ -271,10 +273,12 @@ def run_mdnet(img_list, init_bbox, gt=None, savefig_dir='', display=False):
             plt.draw()
         if savefig:
             fig.savefig(os.path.join(savefig_dir,'0000.jpg'),dpi=dpi)
+    # ================adaptation model setting (sky)========
+    model = tgt_model
+    model.set_learnable_params(opts['ft_layers'])
 
     # Main loop
     for i in range(1, len(img_list)):
-
         tic = time.time()
         # Load image
         image = Image.open(img_list[i]).convert('RGB')
@@ -406,7 +410,7 @@ if __name__ == "__main__":
 
         # Run tracker
         print('------------------run tracker------------------')
-        result, result_bb, fps = run_mdnet(img_list, init_bbox, gt=gt, savefig_dir=savefig_dir, display=display)
+        result, result_bb, fps = run_mdnet(args.seq, img_list, init_bbox, gt=gt, savefig_dir=savefig_dir, display=display)
 
         # Save result
         print('------------------save result------------------')
