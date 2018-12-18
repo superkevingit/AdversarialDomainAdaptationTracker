@@ -40,7 +40,7 @@ def train_tgt(seq_name, src_encoder, tgt_encoder, critic,
     optimizer_critic = optim.Adam(critic.parameters(),
                                   lr=opts['d_learning_rate'],
                                   betas=(opts['beta1'], opts['beta2']))
-    len_data_loader = opts['source_batch']
+#    len_data_loader = opts['source_batch']
 
     ####################
     # 2. train network #
